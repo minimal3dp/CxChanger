@@ -1,0 +1,43 @@
+# Checks the original CxChanger repo daily. If it has new commits, fast-forwards
+# this fork's main branch and opens an issue listing them. It never touches m3dp.
+# Scheduled workflows only run from the DEFAULT branch: set m3dp as default on GitHub.
+name: upstream-watch
+on:
+  schedule:
+    - cron: "17 11 * * *"   # daily, 07:17 Eastern (EDT)
+  workflow_dispatch:
+permissions:
+  contents: write
+  issues: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Fetch upstream and fast-forward main
+        id: ff
+        run: |
+          git config core.quotepath false
+          git remote add upstream https://github.com/cx330-TXY/CxChanger.git
+          git fetch upstream main
+          n=$(git rev-list --count HEAD..upstream/main)
+          echo "count=$n" >> "$GITHUB_OUTPUT"
+          if [ "$n" -gt 0 ]; then
+            { echo 'log<<EOF'; git log --format='- `%h` %ci %s' HEAD..upstream/main; echo; echo '```'; git diff --stat HEAD upstream/main; echo '```'; echo EOF; } >> "$GITHUB_OUTPUT"
+            git merge --ff-only upstream/main
+            git push origin HEAD:main
+          fi
+      - name: Open issue
+        if: steps.ff.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COUNT: ${{ steps.ff.outputs.count }}
+          LOG: ${{ steps.ff.outputs.log }}
+        run: |
+          printf 'main was fast-forwarded. Review, then run `m3dp/tools/sync-upstream.sh` locally to merge into m3dp.\n\n%s\n' "$LOG" > body.md
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Upstream CxChanger: $COUNT new commit(s)" \
+            --body-file body.md
